@@ -1,38 +1,45 @@
-import { useState } from 'react';
-import { Message } from '../types/chat';
-import { sendMessage } from '../services/api';
+//Custom React hook to manage chat state, including messages, loading status, and error handling. It provides a send function to handle user input and communicate with the backend API.
+import { useState } from "react"
+import type { Message } from "../types/chat"
+import { sendMessage } from "../services/api"
 
-const useChat = () => {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [loading, setLoading] = useState(false);
+const SESSION_ID = "session_001"   // hardcoded for now, dynamic later
 
-  const addMessage = (message: Message) => {
-    setMessages((current) => [...current, message]);
-  };
+export const useChat = () => {
+  const [messages, setMessages] = useState<Message[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const sendUserMessage = async (content: string) => {
-    const userMessage: Message = {
-      id: `${Date.now()}-user`,
-      role: 'user',
+  const addMessage = (role: "user" | "assistant", content: string) => {
+    const newMessage: Message = {
+      id: crypto.randomUUID(),
+      role,
       content,
-    };
+      timestamp: new Date(),
+    }
+    setMessages((prev) => [...prev, newMessage])
+    return newMessage
+  }
 
-    addMessage(userMessage);
-    setLoading(true);
+  const send = async (userInput: string) => {
+    if (!userInput.trim()) return
+
+    addMessage("user", userInput)
+    setLoading(true)
+    setError(null)
 
     try {
-      const assistantMessage = await sendMessage(content);
-      addMessage(assistantMessage);
+      const response = await sendMessage({
+        session_id: SESSION_ID,
+        message: userInput,
+      })
+      addMessage("assistant", response.reply)
+    } catch (err) {
+      setError("Something went wrong. Please try again.")
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
-  return {
-    messages,
-    loading,
-    sendUserMessage,
-  };
-};
-
-export default useChat;
+  return { messages, loading, error, send }
+}

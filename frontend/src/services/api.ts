@@ -1,23 +1,21 @@
-import { Message } from '../types/chat';
+//Connect to the backend API using axios to send messages and fetch chat history.
 
-export const sendMessage = async (text: string): Promise<Message> => {
-  const response = await fetch('/api/chat', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ text }),
-  });
+import axios from "axios"
+import type { SendMessageRequest, SendMessageResponse } from "../types/chat"
 
-  if (!response.ok) {
-    throw new Error('Failed to send message');
-  }
+const BASE_URL = "http://127.0.0.1:8000/api"
 
-  const data = await response.json();
+export const sendMessage = async (
+  payload: SendMessageRequest
+): Promise<SendMessageResponse> => {
+  const response = await axios.post<SendMessageResponse>(
+    `${BASE_URL}/chat`,
+    payload
+  )
+  return response.data
+}
 
-  return {
-    id: data.id || `${Date.now()}-assistant`,
-    role: 'assistant',
-    content: data.content || '',
-  };
-};
+export const fetchHistory = async (sessionId: string) => {
+  const response = await axios.get(`${BASE_URL}/history/${sessionId}`)
+  return response.data
+}
