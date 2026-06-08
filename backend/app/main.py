@@ -20,7 +20,7 @@ Base.metadata.create_all(bind=engine)
 
 # Register both routers
 app.include_router(chat_router, prefix="/api")
-app.include_router(upload_router, prefix="/api")           # new
+app.include_router(upload_router, prefix="/api")         # new
 
 @app.get("/")
 def root():

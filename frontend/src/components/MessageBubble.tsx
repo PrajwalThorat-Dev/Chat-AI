@@ -1,3 +1,4 @@
+import ReactMarkdown from "react-markdown"
 import type { Message } from "../types/chat"
 
 interface Props {
@@ -20,8 +21,13 @@ const MessageBubble = ({ message }: Props) => {
         borderRadius: "12px",
         maxWidth: "70%",
         fontSize: "14px",
+        lineHeight: "1.6"
       }}>
-        {message.content}
+        {isUser ? (
+          message.content
+        ) : (
+          <ReactMarkdown>{message.content}</ReactMarkdown>
+        )}
       </div>
     </div>
   )

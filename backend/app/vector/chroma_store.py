@@ -71,3 +71,19 @@ def search_chunks(query: str, pdf_id: str, top_k: int = 3) -> list[dict]:
         return []
 
     return results["metadatas"][0]
+
+def delete_pdf_from_chroma(pdf_id: str):
+    # Delete all embeddings for a specific pdf_id from ChromaDB
+    results = collection.get(where={"pdf_id": pdf_id})
+    if results["ids"]:
+        collection.delete(ids=results["ids"])
+
+def get_all_pdf_ids() -> list[str]:
+    # Return all unique pdf_ids currently stored in ChromaDB
+    results = collection.get()
+    pdf_ids = list({
+        meta["pdf_id"]
+        for meta in results["metadatas"]
+        if meta.get("pdf_id")
+    })
+    return pdf_ids

@@ -1,23 +1,19 @@
-//Define TypeScript interfaces for chat messages, chat sessions, and API request/response structures to ensure type safety when interacting with the backend API.
-
 export interface Message {
   id: string
   role: "user" | "assistant"
   content: string
   timestamp: Date
-}
-
-export interface ChatSession {
-  sessionId: string
-  messages: Message[]
+  mode?: "chat" | "rag"             // optional — shows which mode was used
 }
 
 export interface SendMessageRequest {
   session_id: string
   message: string
+  pdf_id?: string                   // optional — triggers RAG when present
 }
 
 export interface SendMessageResponse {
   reply: string
   session_id: string
+  mode: "chat" | "rag"
 }
