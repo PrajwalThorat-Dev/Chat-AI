@@ -1,43 +1,49 @@
 # chroma_store.py
-# Manages all ChromaDB operations.
-# Stores parent text in document field and child vectors for search.
-# No PostgreSQL dependency for document chunks.
+# Manages all ChromaDB operations using LangChain Chroma wrapper.
+# Parent text stored in document field, child vectors for search.
 
+import uuid
 import chromadb
-import ollama
+from langchain_chroma import Chroma
+from langchain_ollama.embeddings import OllamaEmbeddings
 
-# Persistent ChromaDB client — data survives server restarts
+# LangChain embedding model
+embedding_model = OllamaEmbeddings(model="nomic-embed-text")
+
+# Persistent ChromaDB client
 chroma_client = chromadb.PersistentClient(path="./chroma_data")
 
-# Single collection for both parent and child entries
+# LangChain Chroma wrapper — handles embedding and storage together
+vectorstore = Chroma(
+    client=chroma_client,
+    collection_name="document_chunks",
+    embedding_function=embedding_model,
+    collection_metadata={"hnsw:space": "cosine"}
+)
+
+# Raw collection for manual parent/child operations
 collection = chroma_client.get_or_create_collection(
     name="document_chunks",
     metadata={"hnsw:space": "cosine"}
 )
 
-# Dummy vector for parent entries — must match nomic-embed-text dimensions
+# Dummy vector for parent entries
 DUMMY_VECTOR = [0.0] * 768
 
 def get_embedding(text: str) -> list[float]:
-    # Generate embedding vector for a piece of text using Ollama
-    response = ollama.embeddings(
-        model="nomic-embed-text",
-        prompt=text
-    )
-    return response["embedding"]
+    # Single embedding for query search
+    return embedding_model.embed_query(text)
 
-def add_parent_entry(
-    parent_id: str,
-    pdf_id: str,
-    filename: str,
-    parent_text: str
-):
-    # Store parent chunk text in ChromaDB document field.
-    # Uses dummy vector since parents are never searched directly.
+def get_embeddings_batch(texts: list[str]) -> list[list[float]]:
+    # Batch embedding for multiple texts at once
+    return embedding_model.embed_documents(texts)
+
+def add_parent_entry(parent_id: str, pdf_id: str, filename: str, parent_text: str):
+    # Store parent text in ChromaDB document field with dummy vector
     collection.add(
         ids=[parent_id],
         embeddings=[DUMMY_VECTOR],
-        documents=[parent_text],           # full parent text stored here
+        documents=[parent_text],
         metadatas=[{
             "pdf_id": pdf_id,
             "chunk_type": "parent",
@@ -46,30 +52,29 @@ def add_parent_entry(
     )
 
 def add_child_entries(chunks: list[dict]):
-    # Store child chunk embeddings in ChromaDB.
-    # Child text is NOT stored — only the vector and parent_id mapping.
-    # Each chunk dict must have: id, content, pdf_id, parent_id, filename
+    # Batch embed all child chunks and store in ChromaDB
+    if not chunks:
+        return
 
     ids = []
-    embeddings = []
     metadatas = []
     documents = []
+    texts_to_embed = []
 
     for chunk in chunks:
-        # Generate real embedding from child text
-        embedding = get_embedding(chunk["content"])
-
         ids.append(chunk["id"])
-        embeddings.append(embedding)
-        documents.append("")               # child text discarded after embedding
+        documents.append("")
         metadatas.append({
             "pdf_id": chunk["pdf_id"],
             "chunk_type": "child",
             "parent_id": chunk["parent_id"],
             "filename": chunk["filename"]
         })
+        texts_to_embed.append(chunk["content"])
 
-    # Batch insert all children
+    # Single batch call for all embeddings
+    embeddings = get_embeddings_batch(texts_to_embed)
+
     collection.add(
         ids=ids,
         embeddings=embeddings,
@@ -78,31 +83,22 @@ def add_child_entries(chunks: list[dict]):
     )
 
 def search_chunks(query: str, pdf_id: str, top_k: int = 3) -> list[dict]:
-    # Search for relevant child chunks using vector similarity.
-    # Filters by pdf_id and chunk_type=child.
-
-    query_embedding = get_embedding(query)
-
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=top_k,
-        where={
+    # Search child chunks using LangChain similarity search
+    results = vectorstore.similarity_search(
+        query=query,
+        k=top_k,
+        filter={
             "$and": [
                 {"pdf_id": {"$eq": pdf_id}},
                 {"chunk_type": {"$eq": "child"}}
             ]
-        },
-        include=["metadatas", "distances"]
+        }
     )
-
-    if not results["metadatas"] or not results["metadatas"][0]:
-        return []
-
-    return results["metadatas"][0]
+    # Return metadata list from results
+    return [doc.metadata for doc in results]
 
 def fetch_parent_texts(parent_ids: list[str]) -> list[str]:
-    # Fetch parent text from ChromaDB document field by parent_ids.
-
+    # Fetch parent text from ChromaDB by parent_ids
     if not parent_ids:
         return []
 
@@ -111,26 +107,22 @@ def fetch_parent_texts(parent_ids: list[str]) -> list[str]:
         include=["documents", "metadatas"]
     )
 
-    # Filter only parent entries and return their document text
     texts = []
     for i, meta in enumerate(results["metadatas"]):
         if meta.get("chunk_type") == "parent":
             doc = results["documents"][i]
-            if doc:                            # skip empty documents
+            if doc:
                 texts.append(doc)
 
     return texts
 
 def get_uploaded_pdfs() -> list[dict]:
-    # Return list of unique PDFs by fetching parent entries.
-    # Replaces the old PostgreSQL get_uploaded_pdfs() function.
-
+    # Return unique PDFs from parent entries
     results = collection.get(
         where={"chunk_type": {"$eq": "parent"}},
         include=["metadatas"]
     )
 
-    # Deduplicate by pdf_id
     seen = set()
     pdfs = []
     for meta in results["metadatas"]:
@@ -144,11 +136,9 @@ def get_uploaded_pdfs() -> list[dict]:
     return pdfs
 
 def delete_pdf_from_chroma(pdf_id: str):
-    # Delete all entries (both parent and child) for a pdf_id.
-
+    # Delete all entries for a pdf_id
     results = collection.get(
         where={"pdf_id": {"$eq": pdf_id}}
     )
-
     if results["ids"]:
         collection.delete(ids=results["ids"])
