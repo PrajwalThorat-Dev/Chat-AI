@@ -1,134 +1,129 @@
-# LangChain Integration — Chat-AI
+# LangGraph ReAct Agent Integration — Chat-AI
 
 ## Overview
-This document summarizes the LangChain components integrated into the Chat-AI RAG pipeline, replacing manual implementations with standardized LangChain abstractions.
+A LangGraph ReAct agent was integrated into the chat pipeline. When a user mentions a file path in their message, the agent automatically detects it, reads the file from disk using a LangChain tool, and answers the question based on the actual file content.
 
 ---
 
-## Phases Implemented
+## How It Works
 
-### Phase A — OllamaEmbeddings (Batch Embedding)
-**File:** `app/vector/chroma_store.py`
+```
+User message contains file path
+        ↓
+chat_service detects path using regex
+        ↓
+LangGraph ReAct agent triggered
+        ↓
+Agent thinks → decides to use file_reader_tool
+        ↓
+file_reader_tool reads file from disk
+        ↓
+Agent answers from actual file content
+        ↓
+Response cleaned → returned to user
+```
 
-**Before:** Single embedding call per chunk using raw `ollama.embeddings()` in a loop.
+---
 
-**After:** Replaced with `LangChain OllamaEmbeddings` supporting batch embedding — all child chunks embedded in a single call.
+## What is a ReAct Agent
 
-**Impact:** Significant upload speed improvement for large documents. A 350-page book with ~2000 child chunks goes from 2000 individual Ollama calls to a single batched call.
+ReAct = Reasoning + Acting. The agent thinks step by step before using a tool:
 
+```
+Thought:     "User gave a file path, I should read it"
+Action:      file_reader_tool
+Action Input: C:\Users\Admin\Documents\sample.csv
+Observation: "Laptop, Phone, Desk, Chair..."
+Thought:     "Now I can answer"
+Final Answer: "The products listed are: Laptop, Phone..."
+```
+
+Unlike a chain (fixed steps), an agent decides on its own when and which tool to use.
+
+---
+
+## Files Created
+
+### `backend/app/services/agent_service.py`
+Core agent file. Contains:
+
+**`build_agent()`** — Creates LangGraph ReAct agent with:
+- `ChatOllama` model (llama3.2:3b) — chat model required for tool binding
+- `file_reader_tool` in tools list
+- System prompt telling agent to give only final answer, no internal reasoning
+
+**`clean_response()`** — Post-processes agent response:
+- Strips Windows and Unix file paths
+- Removes leftover path references like "in [file] are:"
+
+**`answer_with_agent()`** — Invokes agent and extracts clean final answer:
+- Walks messages in reverse to find last clean AI response
+- Skips tool call messages
+- Applies `clean_response()` before returning
+
+---
+
+## Files Modified
+
+### `backend/app/tools/file_reader_tool.py`
+**Added `read_from_path()`** — reads file directly from absolute disk path:
+- Checks if file exists at given path
+- Detects file type from extension
+- Opens file as bytes and passes to correct handler
+- Returns extracted text content
+
+**Updated `file_reader_tool` decorator** — now handles two modes:
+```
+Windows/Unix path detected → read_from_path()  (disk read)
+Filename only              → _file_store lookup  (UI upload)
+```
+
+Path detection logic:
 ```python
-from langchain_ollama.embeddings import OllamaEmbeddings
-embedding_model = OllamaEmbeddings(model="nomic-embed-text")
-embeddings = embedding_model.embed_documents(texts)  # batch
+if os.path.sep in input or (len(input) > 3 and input[1] == ":"):
+    return read_from_path(input)
 ```
 
----
-
-### Phase B — PyMuPDFLoader (Document Loading)
-**File:** `app/services/pdf_service.py`
-
-**Before:** Manual PDF extraction using `fitz.open()` with page-by-page text loop. No metadata available.
-
-**After:** Replaced with `LangChain PyMuPDFLoader` which returns structured `Document` objects with automatic metadata.
-
-**Impact:** Each extracted page now carries metadata (`page_number`, `source`, `author`, `total_pages`) enabling future page-level attribution in answers.
-
+### `backend/app/services/chat_service.py`
+**Added `has_file_path()`** — regex detects file path in message:
 ```python
-from langchain_community.document_loaders import PyMuPDFLoader
-loader = PyMuPDFLoader(file_path)
-documents = loader.load()  # returns Document objects with metadata
+windows_path = re.search(r'[A-Za-z]:\\[\w\\.\- ]+', message)
+unix_path = re.search(r'\/[\w\/.\-]+\.\w+', message)
 ```
 
----
-
-### Phase C — LangChain Chroma Wrapper
-**File:** `app/vector/chroma_store.py`
-
-**Before:** Raw ChromaDB `collection.query()` calls with manual embedding injection.
-
-**After:** Integrated `LangChain Chroma` vectorstore wrapper alongside raw collection for parent/child operations requiring fine-grained control.
-
-**Impact:** Cleaner similarity search API with built-in embedding handling. Maintains raw collection access for parent entry storage with dummy vectors.
-
+**Added agent mode to `handle_message()`** — new condition between RAG and normal chat:
 ```python
-from langchain_chroma import Chroma
-vectorstore = Chroma(client=chroma_client, collection_name="document_chunks",
-                     embedding_function=embedding_model)
-results = vectorstore.similarity_search(query, k=3, filter={...})
+if pdf_id:          → RAG mode
+elif has_file_path: → Agent mode  ← new
+else:               → Normal chat
 ```
 
 ---
 
-### Phase D — ChatPromptTemplate (Prompt Management)
-**File:** `app/services/rag_service.py`
-
-**Before:** Plain Python f-string prompt built manually inside a function.
-
-**After:** Replaced with `LangChain ChatPromptTemplate` — a reusable, testable prompt template with named variables.
-
-**Impact:** Prompt logic is cleanly separated from pipeline logic. Easy to modify, version, or swap prompts without touching RAG flow.
-
-```python
-from langchain_core.prompts import ChatPromptTemplate
-rag_prompt = ChatPromptTemplate.from_template("""
-You are a document assistant...
-Context: {context}
-Question: {question}
-""")
-```
-
----
-
-### Phase E — ChatMessageHistory (Conversation Memory)
-**File:** `app/services/chat_service.py`
-
-**Before:** Manual history list built from PostgreSQL query on every request.
-
-**After:** Replaced with `LangChain ChatMessageHistory` — in-memory session store that loads from PostgreSQL on first use and maintains history for subsequent messages.
-
-**Impact:** Reduced PostgreSQL reads for active sessions. History management standardized using LangChain message types (`HumanMessage`, `AIMessage`).
-
-```python
-from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain_core.messages import HumanMessage, AIMessage
-history_obj = ChatMessageHistory()
-history_obj.add_message(HumanMessage(content=user_message))
-```
-
----
-
-## Architecture After Integration
+## Three Chat Modes After Integration
 
 ```
-PDF Upload:
-PyMuPDFLoader → RecursiveCharacterTextSplitter → parent/child chunks
-→ OllamaEmbeddings (batch) → ChromaDB (Chroma wrapper + raw collection)
-
-RAG Query:
-OllamaEmbeddings (query) → Chroma similarity_search
-→ fetch parent text → ChatPromptTemplate → LLaMA → answer
-
-Normal Chat:
-ChatMessageHistory (load from PG once) → LLaMA → save to PG + memory
+mode: "chat"   → normal LLaMA conversation (no pdf_id, no file path)
+mode: "rag"    → PDF question answering (pdf_id provided)
+mode: "rag"    → Agent file reading (file path detected in message)
 ```
+
+Agent mode reuses "rag" display style on frontend — no frontend changes needed.
 
 ---
 
 ## Packages Added
 
 ```
-langchain-ollama       — OllamaEmbeddings
-langchain-community    — PyMuPDFLoader, ChatMessageHistory
-langchain-chroma       — Chroma vectorstore wrapper
-langchain-core         — ChatPromptTemplate, HumanMessage, AIMessage
-langchain              — Core framework
+langgraph   — LangGraph ReAct agent (create_react_agent)
 ```
 
 ---
 
-## What Was Not Changed
-- FastAPI routes and models
-- PostgreSQL chat history storage
-- ChromaDB parent-child architecture
-- Ollama LLaMA model integration
-- Frontend (React + TypeScript)
+## Supported File Types for Path-Based Reading
+
+```
+.pdf   .txt   .csv   .docx   .json   .py   .js   .ts   .md
+```
+
+---

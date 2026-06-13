@@ -3,7 +3,7 @@ export interface Message {
   role: "user" | "assistant"
   content: string
   timestamp: Date
-  mode?: "chat" | "rag"             // optional — shows which mode was used
+  mode?: "chat" | "rag"  | "direct_read"           
 }
 
 export interface SendMessageRequest {
@@ -16,4 +16,11 @@ export interface SendMessageResponse {
   reply: string
   session_id: string
   mode: "chat" | "rag"
+}
+
+export interface DirectFileResponse {
+  filename: string
+  question: string
+  answer: string
+  mode: "direct_read"
 }

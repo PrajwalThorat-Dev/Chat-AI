@@ -44,3 +44,17 @@ export const listPdfs = async (): Promise<{ pdf_id: string; filename: string }[]
 export const deletePdf = async (pdfId: string): Promise<void> => {
   await axios.delete(`${BASE_URL}/pdfs/${pdfId}`)
 }
+
+// Upload any file and ask a question about it directly
+import type { DirectFileResponse } from "../types/chat"
+
+export const readFile = async (file: File): Promise<DirectFileResponse> => {
+  const formData = new FormData()
+  formData.append("file", file)
+  const response = await axios.post(
+    `${BASE_URL}/read-file`,
+    formData,
+    { headers: { "Content-Type": "multipart/form-data" } }
+  )
+  return response.data
+}

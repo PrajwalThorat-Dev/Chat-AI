@@ -6,12 +6,14 @@ import ChatWindow from "./components/ChatWindow"
 import InputBar from "./components/InputBar"
 import PdfPanel from "./components/PdfPanel"
 import { useChat } from "./hooks/useChat"
+import FileReaderPanel from "./components/FileReaderPanel"
 
 function App() {
   const {
     messages, loading, error, send,
     pdfs, selectedPdf, setSelectedPdf,
-    uploading, handleUpload, handleDeletePdf
+    uploading, handleUpload, handleDeletePdf,
+    fileReading, handleReadFile 
   } = useChat()
 
   return (
@@ -43,14 +45,29 @@ function App() {
 
       {/* Main content: sidebar + chat */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+
+    {/* Sidebar — contains both PDF panel and file reader */}
+    <div style={{
+        width: "240px",
+        borderRight: "1px solid #2a2a2a",
+        display: "flex",
+        flexDirection: "column",
+        background: "#0f0f0f",
+        overflow: "hidden"
+    }}>
         <PdfPanel
-          pdfs={pdfs}
-          selectedPdf={selectedPdf}
-          uploading={uploading}
-          onUpload={handleUpload}
-          onSelect={setSelectedPdf}
-          onDelete={handleDeletePdf}
+            pdfs={pdfs}
+            selectedPdf={selectedPdf}
+            uploading={uploading}
+            onUpload={handleUpload}
+            onSelect={setSelectedPdf}
+            onDelete={handleDeletePdf}
         />
+        <FileReaderPanel
+            fileReading={fileReading}
+            onReadFile={handleReadFile}
+        />
+    </div>
 
         <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
           <ChatWindow messages={messages} />

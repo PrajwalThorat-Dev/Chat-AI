@@ -1,27 +1,33 @@
 # chat_service.py
+# Routes messages to chat, RAG, or agent mode.
+# Agent mode triggered when user message contains a file path.
+
+import re
 from sqlalchemy.orm import Session
+from langchain_ollama import OllamaLLM as LangChainOllama
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.messages import HumanMessage, AIMessage
-from app.llm.ollama_llm import OllamaLLM
 from app.services.history_service import get_history, save_message
 from app.services.rag_service import answer_with_rag
+from app.services.agent_service import answer_with_agent
 
-llm = OllamaLLM()
+llm = LangChainOllama(model="llama3.2:3b")
 
-# Per-session history store
 _history_store: dict[str, ChatMessageHistory] = {}
 
+def has_file_path(message: str) -> bool:
+    # Detect Windows or Unix file path in message
+    windows_path = re.search(r'[A-Za-z]:\\[\w\\.\- ]+', message)
+    unix_path = re.search(r'\/[\w\/.\-]+\.\w+', message)
+    return bool(windows_path or unix_path)
+
 def get_session_history(session_id: str) -> ChatMessageHistory:
-    # Get or create chat history for a session
     if session_id not in _history_store:
         _history_store[session_id] = ChatMessageHistory()
     return _history_store[session_id]
 
 def load_history_into_memory(session_id: str, db: Session):
-    # Load existing DB history into LangChain memory on first use
     history_obj = get_session_history(session_id)
-
-    # Only load if empty
     if len(history_obj.messages) == 0:
         history = get_history(session_id, db)
         for msg in history:
@@ -37,11 +43,10 @@ def handle_message(
     pdf_id: str = None
 ) -> tuple[str, str]:
 
-    # Save user message to PostgreSQL
     save_message(session_id, role="user", content=user_message, db=db)
 
     if pdf_id:
-        # RAG mode
+        # RAG mode — uploaded PDF
         reply = answer_with_rag(
             question=user_message,
             pdf_id=pdf_id,
@@ -49,29 +54,28 @@ def handle_message(
             db=db
         )
         mode = "rag"
+
+    elif has_file_path(user_message):
+        # Agent mode — file path detected in message
+        reply = answer_with_agent(question=user_message)
+        mode = "rag"
+
     else:
-        # Normal chat with LangChain message history
+        # Normal chat mode
         load_history_into_memory(session_id, db)
         history_obj = get_session_history(session_id)
-
-        # Build messages list from history
         messages = []
         for msg in history_obj.messages:
             if isinstance(msg, HumanMessage):
                 messages.append({"role": "user", "content": msg.content})
             else:
                 messages.append({"role": "assistant", "content": msg.content})
-
-        # Add current message
         messages.append({"role": "user", "content": user_message})
-        reply = llm.generate(messages)
-
-        # Save to LangChain history
+        full_prompt = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
+        reply = llm.invoke(full_prompt)
         history_obj.add_message(HumanMessage(content=user_message))
         history_obj.add_message(AIMessage(content=reply))
         mode = "chat"
 
-    # Save reply to PostgreSQL
     save_message(session_id, role="assistant", content=reply, db=db)
-
     return reply, mode

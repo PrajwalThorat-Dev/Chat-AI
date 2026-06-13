@@ -4,7 +4,7 @@
 
 import { useState, useEffect } from "react"
 import type { Message } from "../types/chat"
-import { sendMessage, uploadPdf, listPdfs, deletePdf } from "../services/api"
+import { sendMessage, uploadPdf, listPdfs, deletePdf, readFile } from "../services/api"
 
 const SESSION_ID = "session_001"
 
@@ -37,7 +37,7 @@ export const useChat = () => {
     }
   }
 
-  const addMessage = (role: "user" | "assistant", content: string, mode?: "chat" | "rag") => {
+  const addMessage = (role: "user" | "assistant", content: string, mode?: "chat" | "rag" | "direct_read") => {
     const newMessage: Message = {
       id: crypto.randomUUID(),
       role,
@@ -96,9 +96,29 @@ export const useChat = () => {
     }
   }
 
+  const [fileReading, setFileReading] = useState(false)
+
+  const handleReadFile = async (file: File) => {
+    setFileReading(true)
+    setError(null)
+
+    // show user message immediately
+    addMessage("user", `[File: ${file.name}]`)
+
+    try {
+      const result = await readFile(file)
+      addMessage("assistant", result.answer, "direct_read")
+    } catch {
+      setError("Failed to read file. Please try again.")
+    } finally {
+      setFileReading(false)
+    }
+  }
+
   return {
     messages, loading, error, send,
     pdfs, selectedPdf, setSelectedPdf,
-    uploading, handleUpload, handleDeletePdf
+    uploading, handleUpload, handleDeletePdf,
+    fileReading, handleReadFile
   }
 }

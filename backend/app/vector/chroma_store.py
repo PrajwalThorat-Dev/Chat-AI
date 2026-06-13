@@ -30,14 +30,6 @@ collection = chroma_client.get_or_create_collection(
 # Dummy vector for parent entries
 DUMMY_VECTOR = [0.0] * 768
 
-def get_embedding(text: str) -> list[float]:
-    # Single embedding for query search
-    return embedding_model.embed_query(text)
-
-def get_embeddings_batch(texts: list[str]) -> list[list[float]]:
-    # Batch embedding for multiple texts at once
-    return embedding_model.embed_documents(texts)
-
 def add_parent_entry(parent_id: str, pdf_id: str, filename: str, parent_text: str):
     # Store parent text in ChromaDB document field with dummy vector
     collection.add(
@@ -81,22 +73,7 @@ def add_child_entries(chunks: list[dict]):
         documents=documents,
         metadatas=metadatas
     )
-
-def search_chunks(query: str, pdf_id: str, top_k: int = 3) -> list[dict]:
-    # Search child chunks using LangChain similarity search
-    results = vectorstore.similarity_search(
-        query=query,
-        k=top_k,
-        filter={
-            "$and": [
-                {"pdf_id": {"$eq": pdf_id}},
-                {"chunk_type": {"$eq": "child"}}
-            ]
-        }
-    )
-    # Return metadata list from results
-    return [doc.metadata for doc in results]
-
+    
 def fetch_parent_texts(parent_ids: list[str]) -> list[str]:
     # Fetch parent text from ChromaDB by parent_ids
     if not parent_ids:
